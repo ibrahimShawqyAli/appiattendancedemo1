@@ -7,7 +7,7 @@ const cors = require("cors");
 const bodyParser = require("body-parser");
 
 const app = express();
-const PORT = process.env.PORT || 2000;
+const PORT = process.env.PORT || 8080;
 const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret";
 
 // Middleware
@@ -17,9 +17,24 @@ app.use(express.json());
 
 
 // Connect to MongoDB
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log("MongoDB Connected"))
-  .catch(err => console.log(err));
+
+// Ensure MongoDB URI is provided
+if (!process.env.MONGO_URI) {
+    console.error("❌ MongoDB connection string (MONGO_URI) is missing!");
+    process.exit(1); // Stop the server if no connection string is provided
+}
+
+// Connect to MongoDB using Railway Environment Variable
+mongoose.connect(process.env.MONGO_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true
+})
+.then(() => console.log("✅ MongoDB Connected Successfully"))
+.catch(err => {
+    console.error("❌ MongoDB Connection Error:", err);
+    process.exit(1); // Stop the server if there is a connection failure
+});
+
 
 // User Schema
 const UserSchema = new mongoose.Schema({

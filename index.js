@@ -17,7 +17,7 @@ app.use(express.json());
 
 
 // Connect to MongoDB
-const MONGO_URL = "mongodb://mongo:iVCIvLdzcLmmsNBOjsHYhfllUTgkGsnZ@monorail.proxy.rlwy.net:14423";
+const MONGO_URL = "mongodb://mongo:iVCIvLdzcLmmsNBOjsHYhfllUTgkGsnZ@mongodb.railway.internal:27017";
 console.log("Mongo URL:", MONGO_URL);
 // Ensure MongoDB URI is provided
 if (!process.env.MONGO_URI) {
@@ -108,7 +108,10 @@ app.post("/api/register", async (req, res) => {
         res.status(200).json({ status: false, message: "Server error", error: err.message });
     }
 });
-
+// test
+app.post("/api/test", async (req, res) => {
+ res.send('Working');
+  });  
 // Login API
 app.post("/api/login", async (req, res) => {
     const { email, password, organization } = req.body; // Organization required for login

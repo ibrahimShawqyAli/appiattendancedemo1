@@ -17,7 +17,8 @@ app.use(express.json());
 
 
 // Connect to MongoDB
-
+const MONGO_URL = "mongodb://mongo:iVCIvLdzcLmmsNBOjsHYhfllUTgkGsnZ@monorail.proxy.rlwy.net:14423";
+console.log("Mongo URL:", MONGO_URL);
 // Ensure MongoDB URI is provided
 if (!process.env.MONGO_URI) {
     console.error("❌ MongoDB connection string (MONGO_URI) is missing!");
@@ -25,7 +26,7 @@ if (!process.env.MONGO_URI) {
 }
 
 // Connect to MongoDB using Railway Environment Variable
-mongoose.connect(process.env.MONGO_URI, {
+mongoose.connect(MONGO_URL, {
     useNewUrlParser: true,
     useUnifiedTopology: true
 })

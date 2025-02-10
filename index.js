@@ -109,7 +109,7 @@ app.post("/api/register", async (req, res) => {
     }
 });
 // test
-app.post("/api/test", async (req, res) => {
+app.get("/api/test", async (req, res) => {
  res.send('Working');
   });  
 // Login API

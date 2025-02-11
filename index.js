@@ -11,7 +11,7 @@ const PORT = process.env.PORT || 8080;
 const JWT_SECRET = process.env.JWT_SECRET || "mySuperSecretKey123!@Shawqy";
 
 // Middleware
-//  Saves timestamps in ISO 8601 UTC format
+// Saves timestamps in ISO 8601 UTC format
 app.use(express.json());
 app.use(cors());
 
@@ -39,21 +39,24 @@ mongoose.connect(MONGO_URL, {
 
 // User Schema
 const UserSchema = new mongoose.Schema({
-    email: { type: String, required: true },
+    email: { type: String, required: true, unique: true },
     password: { type: String, required: true },
     name: { type: String, required: true },
     mobile: { type: String, required: true },
     department: { type: String, required: true },
     position: { type: String, required: true },
-    organization: { type: String, required: true } // Organization field added
-  });
-  const User = mongoose.model("User", UserSchema);
+    organization: { type: String, required: true },
+    role: { type: String, required: true, default: "employee" } // New Role Field
+});
+const User = mongoose.model("User", UserSchema);
   
 
 // Location Schema
 const LocationSchema = new mongoose.Schema({
-  longitude: { type: Number, required: true },
-  latitude: { type: Number, required: true }
+    organization: { type: String, required: true, unique: true },
+    longitude: { type: Number, required: true },
+    latitude: { type: Number, required: true },
+    tolerance: { type: Number, required: true, default: 200 } // Default tolerance in meters
 });
 const Location = mongoose.model("Location", LocationSchema);
 
@@ -77,37 +80,30 @@ const WorkTime = mongoose.model("WorkTime", WorkTimeSchema);
 
 // Registration API
 app.post("/api/register", async (req, res) => {
-    const { email, password, name, mobile, department, position, organization } = req.body;
-
-    // Email validation regex pattern
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-    // Validate all required fields
-    if (!email || !password || !name || !mobile || !department || !position || !organization) {
+    const { email, password, name, mobile, department, position, organization, role } = req.body;
+    
+    if (!email || !password || !name || !mobile || !department || !position || !organization || !role) {
         return res.status(200).json({ status: false, message: "All fields are required" });
     }
 
-    // Validate email format
-    if (!emailRegex.test(email)) {
-        return res.status(200).json({ status: false, message: "Invalid email format" });
-    }
-
     try {
-        let user = await User.findOne({ email, organization }); // Ensure unique user per organization
+        let user = await User.findOne({ email, organization });
         if (user) return res.status(200).json({ status: false, message: "User already exists in this organization" });
 
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
 
-        user = new User({ email, password: hashedPassword, name, mobile, department, position, organization });
+        user = new User({ email, password: hashedPassword, name, mobile, department, position, organization, role });
         await user.save();
 
-        const token = jwt.sign({ userId: user._id, organization }, JWT_SECRET, { expiresIn: "1h" });
-        res.status(201).json({ status: true, message: "User registered successfully", token });
+        const token = jwt.sign({ userId: user._id, organization, role }, JWT_SECRET, { expiresIn: "1h" });
+
+        res.status(200).json({ status: true, message: "User registered successfully", token });
     } catch (err) {
         res.status(200).json({ status: false, message: "Server error", error: err.message });
     }
 });
+
 // test
 app.get("/api/test", async (req, res) => {
  res.send('Working');
@@ -186,14 +182,14 @@ app.get("/api/user-profile", async (req, res) => {
         try {
             decoded = jwt.verify(token, JWT_SECRET);
         } catch (err) {
-            return res.status(200).json({ status: false, message: "Invalid User" });
+            return res.status(200).json({ status: false, message: "Invalid or expired token" });
         }
 
-        const { userId, organization } = decoded;
+        const { userId } = decoded;
 
-        // Fetch user data including name
-        const user = await User.findOne({ _id: userId, organization }).select("-password"); // Explicitly select fields
-
+        // Fetch user data and exclude password
+        const user = await User.findById(userId).select("-password");
+        
         if (!user) {
             return res.status(200).json({ status: false, message: "User not found" });
         }
@@ -207,7 +203,8 @@ app.get("/api/user-profile", async (req, res) => {
                 mobile: user.mobile,
                 department: user.department,
                 position: user.position,
-                organization: user.organization
+                organization: user.organization,
+                role: user.role // ✅ Include role in the response
             } 
         });
 
@@ -216,22 +213,16 @@ app.get("/api/user-profile", async (req, res) => {
     }
 });
 
+
 // update profile
 app.put("/api/update-profile", async (req, res) => {
     try {
         const authHeader = req.headers.authorization;
-        const passwordHeader = req.headers.password; // Get password from headers
-
         if (!authHeader || !authHeader.startsWith("Bearer ")) {
             return res.status(200).json({ status: false, message: "Invalid or missing Authorization header" });
         }
-        if (!passwordHeader) {
-            return res.status(200).json({ status: false, message: "Password is required in headers" });
-        }
 
-        // Extract and verify token
         const token = authHeader.split(" ")[1];
-
         let decoded;
         try {
             decoded = jwt.verify(token, JWT_SECRET);
@@ -239,40 +230,79 @@ app.put("/api/update-profile", async (req, res) => {
             return res.status(200).json({ status: false, message: "Invalid User" });
         }
 
-        const userId = decoded.userId;
+        const { userId } = decoded;
+        const { name, mobile, department, position, role } = req.body; // Allow role updates
 
-        // Fetch user data
-        const user = await User.findById(userId);
+        const user = await User.findByIdAndUpdate(
+            userId,
+            { name, mobile, department, position, role },
+            { new: true, runValidators: true }
+        ).select("-password");
+
         if (!user) {
             return res.status(200).json({ status: false, message: "User not found" });
         }
 
-        // Verify the provided password
-        const isMatch = await bcrypt.compare(passwordHeader, user.password);
-        if (!isMatch) {
-            return res.status(200).json({ status: false, message: "Incorrect password" });
-        }
-
-        // Extract fields from request body (excluding email and organization)
-        const { name, mobile, department, position } = req.body;
-
-        // Ensure email and organization are NOT updated
-        const updatedUser = await User.findByIdAndUpdate(
-            userId,
-            { name, mobile, department, position }, // Do not update email or organization
-            { new: true, runValidators: true }
-        ).select("-password -email -organization"); // Exclude sensitive fields
-
-        if (!updatedUser) {
-            return res.status(200).json({ status: false, message: "User not found after update" });
-        }
-
-        res.status(200).json({ status: true, message: "Profile updated successfully", user: updatedUser });
+        res.status(200).json({ status: true, message: "Profile updated successfully", user });
     } catch (err) {
         res.status(200).json({ status: false, message: "Server error", error: err.message });
     }
 });
 
+// location 
+app.post("/api/set-location", async (req, res) => {
+    try {
+        const { organization, longitude, latitude, tolerance } = req.body;
+
+        if (!organization || !longitude || !latitude || !tolerance) {
+            return res.status(200).json({ status: false, message: "All fields are required" });
+        }
+
+        let location = await Location.findOne({ organization });
+
+        if (location) {
+            location.longitude = longitude;
+            location.latitude = latitude;
+            location.tolerance = tolerance;
+            await location.save();
+        } else {
+            location = new Location({ organization, longitude, latitude, tolerance });
+            await location.save();
+        }
+
+        res.status(200).json({ status: true, message: "Location set successfully", location });
+    } catch (err) {
+        res.status(200).json({ status: false, message: "Server error", error: err.message });
+    }
+});
+
+app.get("/api/get-location", async (req, res) => {
+    try {
+        const authHeader = req.headers.authorization;
+        if (!authHeader || !authHeader.startsWith("Bearer ")) {
+            return res.status(200).json({ status: false, message: "Invalid or missing Authorization header" });
+        }
+
+        const token = authHeader.split(" ")[1];
+        let decoded;
+        try {
+            decoded = jwt.verify(token, JWT_SECRET);
+        } catch (err) {
+            return res.status(200).json({ status: false, message: "Invalid User" });
+        }
+
+        const { organization } = decoded;
+        const location = await Location.findOne({ organization });
+
+        if (!location) {
+            return res.status(200).json({ status: false, message: "Office location not set for this organization" });
+        }
+
+        res.status(200).json({ status: true, message: "Location retrieved", location });
+    } catch (err) {
+        res.status(200).json({ status: false, message: "Server error", error: err.message });
+    }
+});
 // get attendance:
 app.get("/api/attendance", async (req, res) => {
     try {
@@ -282,13 +312,13 @@ app.get("/api/attendance", async (req, res) => {
 
         // Validate headers
         if (!month || month < 1 || month > 12) {
-            return res.status(400).json({ status: false, message: "Invalid or missing month (1-12)" });
+            return res.status(200).json({ status: false, message: "Invalid or missing month (1-12)" });
         }
         if (!year || year < 2000 || year > new Date().getFullYear()) {
-            return res.status(400).json({ status: false, message: "Invalid or missing year" });
+            return res.status(200).json({ status: false, message: "Invalid or missing year" });
         }
         if (!authHeader || !authHeader.startsWith("Bearer ")) {
-            return res.status(401).json({ status: false, message: "Invalid or missing Authorization header" });
+            return res.status(200).json({ status: false, message: "Invalid or missing Authorization header" });
         }
 
         // Extract and verify token
@@ -297,7 +327,7 @@ app.get("/api/attendance", async (req, res) => {
         try {
             decoded = jwt.verify(token, JWT_SECRET);
         } catch (err) {
-            return res.status(401).json({ status: false, message: "Invalid User" });
+            return res.status(200).json({ status: false, message: "Invalid User" });
         }
 
         const userId = decoded.userId;
@@ -386,7 +416,7 @@ app.get("/api/attendance", async (req, res) => {
         });
 
     } catch (err) {
-        res.status(500).json({ status: false, message: "Server error", error: err.message });
+        res.status(200).json({ status: false, message: "Server error", error: err.message });
     }
 });
 
@@ -399,7 +429,7 @@ app.post("/api/attendance", async (req, res) => {
         const { longitude, latitude, checkType } = req.body;
 
         if (!longitude || !latitude || !checkType) {
-            return res.status(400).json({
+            return res.status(200).json({
                 status: false,
                 message: "Longitude, latitude, and checkType are required",
             });
@@ -409,7 +439,7 @@ app.post("/api/attendance", async (req, res) => {
 
         // Validate token presence
         if (!authHeader || !authHeader.startsWith("Bearer ")) {
-            return res.status(401).json({ status: false, message: "Invalid or missing Authorization header" });
+            return res.status(200).json({ status: false, message: "Invalid or missing Authorization header" });
         }
 
         // Extract and verify token
@@ -422,11 +452,11 @@ app.post("/api/attendance", async (req, res) => {
             console.log("Decoded Token:", decoded);
         } catch (err) {
             console.error("JWT Verification Error:", err.message);
-            return res.status(401).json({ status: false, message: "Invalid User" });
+            return res.status(200).json({ status: false, message: "Invalid User" });
         }
 
         if (!decoded || !decoded.userId) {
-            return res.status(401).json({ status: false, message: "Invalid User structure" });
+            return res.status(200).json({ status: false, message: "Invalid User structure" });
         }
 
         const userId = decoded.userId;
@@ -435,7 +465,7 @@ app.post("/api/attendance", async (req, res) => {
         // Check if office location exists
         const location = await Location.findOne();
         if (!location) {
-            return res.status(400).json({ status: false, message: "Office location not set" });
+            return res.status(200).json({ status: false, message: "Office location not set" });
         }
 
         console.log("Office Location Found:", location);
@@ -452,7 +482,7 @@ app.post("/api/attendance", async (req, res) => {
         console.log("Calculated Distance:", distance);
 
         if (distance > 200) {
-            return res.status(400).json({ status: false, message: `You are too far from the office. Distance: ${distance} meters` });
+            return res.status(200).json({ status: false, message: `You are too far from the office. Distance: ${distance} meters` });
         }
 
         // Get the current date without time (YYYY-MM-DD)
@@ -469,7 +499,7 @@ app.post("/api/attendance", async (req, res) => {
         if (checkType === "check-out") {
             // If user tries to check-out without a prior check-in, block it
             if (!checkInRecord) {
-                return res.status(400).json({
+                return res.status(200).json({
                     status: false,
                     message: "You must check-in first before checking out"
                 });
@@ -483,7 +513,7 @@ app.post("/api/attendance", async (req, res) => {
             });
 
             if (checkOutRecord) {
-                return res.status(400).json({
+                return res.status(200).json({
                     status: false,
                     message: `You have already checked out today at ${checkOutRecord.timestamp.toISOString()}`
                 });
@@ -505,7 +535,7 @@ app.post("/api/attendance", async (req, res) => {
 
     } catch (err) {
         console.error("Server Error:", err.message);
-        res.status(500).json({ status: false, message: "Server error", error: err.message });
+        res.status(200).json({ status: false, message: "Server error", error: err.message });
     }
 });
 
@@ -518,7 +548,7 @@ app.post("/api/attendance", async (req, res) => {
         const { longitude, latitude, checkType } = req.body;
 
         if (!longitude || !latitude || !checkType) {
-            return res.status(400).json({
+            return res.status(200).json({
                 status: false,
                 message: "Longitude, latitude, and checkType are required",
             });
@@ -528,7 +558,7 @@ app.post("/api/attendance", async (req, res) => {
 
         // Validate token presence
         if (!authHeader || !authHeader.startsWith("Bearer ")) {
-            return res.status(401).json({ status: false, message: "Invalid or missing Authorization header" });
+            return res.status(200).json({ status: false, message: "Invalid or missing Authorization header" });
         }
 
         // Extract and verify token
@@ -541,11 +571,11 @@ app.post("/api/attendance", async (req, res) => {
             console.log("Decoded Token:", decoded);
         } catch (err) {
             console.error("JWT Verification Error:", err.message);
-            return res.status(401).json({ status: false, message: "Invalid User" });
+            return res.status(200).json({ status: false, message: "Invalid User" });
         }
 
         if (!decoded || !decoded.userId) {
-            return res.status(401).json({ status: false, message: "Invalid User structure" });
+            return res.status(200).json({ status: false, message: "Invalid User structure" });
         }
 
         const userId = decoded.userId;
@@ -554,7 +584,7 @@ app.post("/api/attendance", async (req, res) => {
         // Check if office location exists
         const location = await Location.findOne();
         if (!location) {
-            return res.status(400).json({ status: false, message: "Office location not set" });
+            return res.status(200).json({ status: false, message: "Office location not set" });
         }
 
         console.log("Office Location Found:", location);
@@ -571,7 +601,7 @@ app.post("/api/attendance", async (req, res) => {
         console.log("Calculated Distance:", distance);
 
         if (distance > 200) {
-            return res.status(400).json({ status: false, message: `You are too far from the office. Distance: ${distance} meters` });
+            return res.status(200).json({ status: false, message: `You are too far from the office. Distance: ${distance} meters` });
         }
 
         // Get the current date in UTC
@@ -587,7 +617,7 @@ app.post("/api/attendance", async (req, res) => {
             });
 
             if (!lastCheckIn) {
-                return res.status(400).json({
+                return res.status(200).json({
                     status: false,
                     message: "You must check in first before checking out."
                 });
@@ -616,7 +646,7 @@ app.post("/api/attendance", async (req, res) => {
 
     } catch (err) {
         console.error("Server Error:", err.message);
-        res.status(500).json({ status: false, message: "Server error", error: err.message });
+        res.status(200).json({ status: false, message: "Server error", error: err.message });
     }
 });
 
@@ -631,22 +661,30 @@ app.post("/api/generate-random-attendance", async (req, res) => {
         const year = parseInt(req.headers["year"]);   // Read year from headers
 
         if (!email) {
-            return res.status(200).json({ status: false, message: "Email is required" });
+            return res.status(400).json({ status: false, message: "Email is required" });
         }
         if (!month || month < 1 || month > 12) {
-            return res.status(200).json({ status: false, message: "Invalid or missing month (1-12)" });
+            return res.status(400).json({ status: false, message: "Invalid or missing month (1-12)" });
         }
         if (!year || year < 2000 || year > new Date().getFullYear()) {
-            return res.status(200).json({ status: false, message: "Invalid or missing year" });
+            return res.status(400).json({ status: false, message: "Invalid or missing year" });
         }
 
         // Find the user by email
         const user = await User.findOne({ email });
         if (!user) {
-            return res.status(200).json({ status: false, message: "User not found" });
+            return res.status(404).json({ status: false, message: "User not found" });
         }
 
         console.log("User Found:", user);
+
+        // Retrieve the office location for the user's organization
+        const location = await Location.findOne({ organization: user.organization });
+        if (!location) {
+            return res.status(404).json({ status: false, message: "Office location not set for this organization" });
+        }
+
+        console.log("Office Location Found:", location);
 
         const numberOfDays = 10; // Number of random days to generate
         const records = [];
@@ -660,12 +698,12 @@ app.post("/api/generate-random-attendance", async (req, res) => {
             randomDate.setMinutes(Math.floor(Math.random() * 60));
             randomDate.setSeconds(0);
 
-            // Create a check-in record
+            // Create a check-in record with dynamic location
             const checkIn = new Attendance({
                 userId: user._id,
                 checkType: "check-in",
-                longitude: 31.2357, // Mock location (Cairo example)
-                latitude: 30.0444,
+                longitude: location.longitude, // Fetch dynamically
+                latitude: location.latitude,  // Fetch dynamically
                 timestamp: randomDate,
             });
 
@@ -680,8 +718,8 @@ app.post("/api/generate-random-attendance", async (req, res) => {
                 const checkOut = new Attendance({
                     userId: user._id,
                     checkType: "check-out",
-                    longitude: 31.2357, // Mock location (Cairo example)
-                    latitude: 30.0444,
+                    longitude: location.longitude, // Fetch dynamically
+                    latitude: location.latitude,  // Fetch dynamically
                     timestamp: checkOutTime,
                 });
 
@@ -718,6 +756,7 @@ app.post("/api/generate-random-attendance", async (req, res) => {
 
     } catch (err) {
         console.error("Error generating random attendance:", err.message);
-        res.status(200).json({ status: false, message: "Server error", error: err.message });
+        res.status(500).json({ status: false, message: "Server error", error: err.message });
     }
 });
+

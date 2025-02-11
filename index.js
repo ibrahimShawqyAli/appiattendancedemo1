@@ -437,131 +437,10 @@ app.post("/api/attendance", async (req, res) => {
 
         const authHeader = req.headers.authorization;
 
-        // Validate token presence
         if (!authHeader || !authHeader.startsWith("Bearer ")) {
             return res.status(200).json({ status: false, message: "Invalid or missing Authorization header" });
         }
 
-        // Extract and verify token
-        const token = authHeader.split(" ")[1];
-        console.log("Received Token:", token);
-
-        let decoded;
-        try {
-            decoded = jwt.verify(token, JWT_SECRET);
-            console.log("Decoded Token:", decoded);
-        } catch (err) {
-            console.error("JWT Verification Error:", err.message);
-            return res.status(200).json({ status: false, message: "Invalid User" });
-        }
-
-        if (!decoded || !decoded.userId) {
-            return res.status(200).json({ status: false, message: "Invalid User structure" });
-        }
-
-        const userId = decoded.userId;
-        console.log("User ID from Token:", userId);
-
-        // Check if office location exists
-        const location = await Location.findOne();
-        if (!location) {
-            return res.status(200).json({ status: false, message: "Office location not set" });
-        }
-
-        console.log("Office Location Found:", location);
-
-        // Calculate distance between user and office
-        console.log("User Location:", longitude, latitude);
-        console.log("Office Location:", location.longitude, location.latitude);
-
-        const distance = Math.sqrt(
-            Math.pow(location.longitude - longitude, 2) +
-            Math.pow(location.latitude - latitude, 2)
-        ) * 111000;
-
-        console.log("Calculated Distance:", distance);
-
-        if (distance > 200) {
-            return res.status(200).json({ status: false, message: `You are too far from the office. Distance: ${distance} meters` });
-        }
-
-        // Get the current date without time (YYYY-MM-DD)
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-
-        // Check if user already has a check-in for today
-        const checkInRecord = await Attendance.findOne({
-            userId,
-            checkType: "check-in",
-            timestamp: { $gte: today }
-        });
-
-        if (checkType === "check-out") {
-            // If user tries to check-out without a prior check-in, block it
-            if (!checkInRecord) {
-                return res.status(200).json({
-                    status: false,
-                    message: "You must check-in first before checking out"
-                });
-            }
-
-            // Check if user already checked out today
-            const checkOutRecord = await Attendance.findOne({
-                userId,
-                checkType: "check-out",
-                timestamp: { $gte: today }
-            });
-
-            if (checkOutRecord) {
-                return res.status(200).json({
-                    status: false,
-                    message: `You have already checked out today at ${checkOutRecord.timestamp.toISOString()}`
-                });
-            }
-        }
-
-        // Save attendance record
-        const attendance = new Attendance({ userId, longitude, latitude, checkType });
-        await attendance.save();
-
-        res.status(200).json({
-            status: true,
-            message: "Attendance recorded successfully",
-            checkType: attendance.checkType,
-            timestamp: attendance.timestamp.toISOString() // Store in ISO format
-        });
-
-        console.log("Attendance Recorded:", attendance);
-
-    } catch (err) {
-        console.error("Server Error:", err.message);
-        res.status(200).json({ status: false, message: "Server error", error: err.message });
-    }
-});
-
-  // Check-in/Check-out API
-  app.post("/api/attendance", async (req, res) => {
-    console.log("Headers Received:", req.headers);
-    console.log("Received Request Body:", req.body); 
-
-    try {
-        const { longitude, latitude, checkType } = req.body;
-
-        if (!longitude || !latitude || !checkType) {
-            return res.status(200).json({
-                status: false,
-                message: "Longitude, latitude, and checkType are required",
-            });
-        }
-
-        const authHeader = req.headers.authorization;
-
-        // Validate token presence
-        if (!authHeader || !authHeader.startsWith("Bearer ")) {
-            return res.status(200).json({ status: false, message: "Invalid or missing Authorization header" });
-        }
-
-        // Extract and verify token
         const token = authHeader.split(" ")[1];
         console.log("Received Token:", token);
 
@@ -608,12 +487,28 @@ app.post("/api/attendance", async (req, res) => {
         const today = new Date();
         today.setUTCHours(0, 0, 0, 0); // Reset time to start of the day (UTC)
 
-        // Check if user is trying to check out before checking in
+        // Handle check-in logic (Only allow the first check-in)
+        if (checkType === "check-in") {
+            const firstCheckIn = await Attendance.findOne({
+                userId,
+                checkType: "check-in",
+                timestamp: { $gte: today } // Check today's records
+            });
+
+            if (firstCheckIn) {
+                return res.status(200).json({
+                    status: false,
+                    message: `You have already checked in today at ${firstCheckIn.timestamp.toISOString().slice(11, 16)} UTC.`,
+                });
+            }
+        }
+
+        // Handle check-out logic (Only save the latest check-out)
         if (checkType === "check-out") {
             const lastCheckIn = await Attendance.findOne({
                 userId,
                 checkType: "check-in",
-                timestamp: { $gte: today } // Find today's check-in
+                timestamp: { $gte: today } // Ensure the user checked in today
             });
 
             if (!lastCheckIn) {
@@ -622,19 +517,38 @@ app.post("/api/attendance", async (req, res) => {
                     message: "You must check in first before checking out."
                 });
             }
+
+            // Find the last check-out record
+            const lastCheckOut = await Attendance.findOne({
+                userId,
+                checkType: "check-out",
+                timestamp: { $gte: today }
+            });
+
+            if (lastCheckOut) {
+                // Update the existing check-out record with the new time
+                lastCheckOut.timestamp = new Date();
+                await lastCheckOut.save();
+                console.log("Updated Check-out:", lastCheckOut);
+
+                return res.status(200).json({
+                    status: true,
+                    message: `Check-out time updated to ${lastCheckOut.timestamp.toISOString().slice(11, 16)} UTC.`,
+                    timestamp: lastCheckOut.timestamp.toISOString()
+                });
+            }
         }
 
-        // Save attendance record with timestamp in UTC format
-        const attendance = new Attendance({ 
-            userId, 
-            longitude, 
-            latitude, 
-            checkType, 
+        // Save new attendance record
+        const attendance = new Attendance({
+            userId,
+            longitude,
+            latitude,
+            checkType,
             timestamp: new Date().toISOString() // Store in UTC format
         });
 
         await attendance.save();
-
         console.log("Attendance Recorded:", attendance);
 
         res.status(200).json({
@@ -649,6 +563,7 @@ app.post("/api/attendance", async (req, res) => {
         res.status(200).json({ status: false, message: "Server error", error: err.message });
     }
 });
+
 
 
 // Start Server

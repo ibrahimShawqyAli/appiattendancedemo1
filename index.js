@@ -18,8 +18,7 @@ app.use(cors());
 
 
 // Connect to MongoDB
-const MONGO_URL = "mongodb://mongo:iVCIvLdzcLmmsNBOjsHYhfllUTgkGsnZ@monorail.proxy.rlwy.net:14423";
-console.log("Mongo URL:", MONGO_URL);
+const MONGO_URL = "mongodb+srv://shawqy5998:ibra_shawqy_5998@testnode1.muzsi.mongodb.net/?retryWrites=true&w=majority&appName=testnode1";
 // Ensure MongoDB URI is provided
 if (!process.env.MONGO_URI) {
     console.error("❌ MongoDB connection string (MONGO_URI) is missing!");

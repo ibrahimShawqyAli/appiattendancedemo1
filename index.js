@@ -8,12 +8,13 @@ const bodyParser = require("body-parser");
 
 const app = express();
 const PORT = process.env.PORT || 8080;
-const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret";
+const JWT_SECRET = process.env.JWT_SECRET || "mySuperSecretKey123!@Shawqy";
 
 // Middleware
 //  Saves timestamps in ISO 8601 UTC format
-app.use(cors());
 app.use(express.json());
+app.use(cors());
+
 
 
 // Connect to MongoDB

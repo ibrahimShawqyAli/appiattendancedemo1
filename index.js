@@ -96,7 +96,7 @@ app.post("/api/register", async (req, res) => {
         user = new User({ email, password: hashedPassword, name, mobile, department, position, organization, role });
         await user.save();
 
-        const token = jwt.sign({ userId: user._id, organization, role }, JWT_SECRET, { expiresIn: "1h" });
+        const token = jwt.sign({ userId: user._id, organization }, JWT_SECRET, { expiresIn: "999y" });
 
         res.status(200).json({ status: true, message: "User registered successfully", token });
     } catch (err) {
@@ -119,7 +119,7 @@ app.post("/api/login", async (req, res) => {
       const isMatch = await bcrypt.compare(password, user.password);
       if (!isMatch) return res.status(200).json({ status: false, message: "Invalid credentials" });
   
-      const token = jwt.sign({ userId: user._id, organization }, JWT_SECRET, { expiresIn: "1h" });
+      const token = jwt.sign({ userId: user._id, organization }, JWT_SECRET, { expiresIn: "999y" });
       res.json({ status: true, message: "Login successful", token });
     } catch (err) {
       res.status(200).json({ status: false, message: "Server error", error: err.message });
